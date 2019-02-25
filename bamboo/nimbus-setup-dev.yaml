@@ -1,0 +1,12 @@
+args:
+    parent-stacks:
+    - nimbus-vpc
+    stack-name: nimbus-setup
+    stack-template: nimbus-setup.json
+    template-path: .
+    tier: dev
+
+parameters:
+    VPCId: vpc-a8e2f2ce
+    AppKey: nimbus-dev-west
+    AppTemplateURL: Undefined

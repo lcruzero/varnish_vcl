@@ -1,0 +1,102 @@
+{
+  "AWSTemplateFormatVersion" : "2010-09-09",
+
+  "Description" : "nimbus-dev Application Security Groups",
+
+  "Parameters" : {
+    "VPCId" : {
+      "Type" : "String",
+      "Description" : "ID of the VPC for nimbus-dev",
+      "ConstraintDescription": "Must be the ID of a VPC"
+    },
+    "AppTemplateURL" : {
+      "Description" : "The URL for the application's cloudformation template",
+      "Type" : "String",
+      "Default" : "Undefined"
+    },
+    "FileBucketName" : {
+      "Description" : "The name of the bucket that holds CF Init files and templates for these stacks",
+      "Type" : "String",
+      "Default" : "nimbus-dev"
+    },
+    "Tier" : {
+      "Type" : "String",
+      "Description" : "Tier to deploy",
+      "ConstraintDescription": "Must be one of dev, uat, stage or prod",
+      "Default" : "dev"
+    }
+  },
+
+  "Resources" : {
+    "nimbusAppSecurityGroup" : {
+      "Type" : "AWS::EC2::SecurityGroup",
+      "Properties" : {
+        "GroupDescription" : "Enable SSH and web traffic",
+        "VpcId" : { "Ref" : "VPCId" },
+        "SecurityGroupIngress" : [
+          {
+            "IpProtocol" : "TCP",
+            "FromPort" : "22",
+            "ToPort" : "22",
+            "CidrIp" : "0.0.0.0/0"
+          },
+          {
+            "IpProtocol" : "TCP",
+            "FromPort" : "443",
+            "ToPort" : "443",
+            "CidrIp" : "0.0.0.0/0"
+          },
+          {
+            "IpProtocol" : "TCP",
+            "FromPort" : "80",
+            "ToPort" : "80",
+            "CidrIp" : "0.0.0.0/0"
+          }
+        ],
+        "Tags": [
+          { "Key": "Name", "Value": "nimbus-dev Web Security Group" },
+          { "Key": "stack", "Value": "nimbus-dev" },
+          { "Key": "substack", "Value": "security-group" },
+          { "Key": "team", "Value": "nimbus" },
+          { "Key": "tier", "Value": { "Ref" : "Tier" } },
+          { "Key": "is_active", "Value": "True" }
+        ]
+      }
+    },
+
+    "nimbusCacheSecurityGroup" : {
+      "Type" : "AWS::EC2::SecurityGroup",
+      "Properties" : {
+        "GroupDescription" : "Prepare to enable elasticache traffic",
+        "VpcId" : { "Ref" : "VPCId" },
+        "SecurityGroupIngress" : [
+          {
+            "IpProtocol" : "tcp",
+            "FromPort" : "11211",
+            "ToPort" : "11211",
+            "SourceSecurityGroupId" : { "Ref" : "nimbusAppSecurityGroup" }
+          }
+        ],
+        "Tags": [
+          { "Key": "Name", "Value": "nimbus-dev Cache Security Group" },
+          { "Key": "stack", "Value": "nimbus-dev" },
+          { "Key": "substack", "Value": "security-group" },
+          { "Key": "team", "Value": "nimbus" },
+          { "Key": "tier", "Value": { "Ref" : "Tier" } },
+          { "Key": "is_active", "Value": "True" }
+        ]
+      }
+    }
+  },
+
+  "Outputs" : {
+    "nimbusAppSecurityGroup" : {
+      "Description" : "nimbus-dev application security group",
+      "Value" : { "Ref" : "nimbusAppSecurityGroup" }
+    },
+    "nimbusCacheSecurityGroup" : {
+      "Description" : "nimbus-dev Cache security group",
+      "Value" : { "Ref" : "nimbusCacheSecurityGroup" }
+    }
+  }
+}

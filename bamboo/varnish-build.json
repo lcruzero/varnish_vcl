@@ -1,0 +1,345 @@
+{
+  "AWSTemplateFormatVersion" : "2010-09-09",
+
+  "Description" : "varnish-www AMI Build",
+
+  "Parameters" : {
+    "VPCId" : {
+      "Type" : "String",
+      "Description" : "ID of the VPC for varnish-www",
+      "ConstraintDescription": "Must be the ID of a VPC"
+    },
+    "nimbusAppSecurityGroup" : {
+      "Type" : "String",
+      "Description" : "SecurityGroup ID for the RDS database",
+      "ConstraintDescription" : "Must be a valid SecurityGroup ID"
+    },
+    "PrivateSubnetA" : {
+      "Type" : "String",
+      "Description" : "IDs of the subnet to launch the base instance",
+      "ConstraintDescription": "Must be a valid VPC subnet"
+    },
+    "PrivateSubnetB" : {
+      "Type" : "String",
+      "Description" : "IDs of the subnet to launch the base instance",
+      "ConstraintDescription": "Must be a valid VPC subnet"
+    },
+    "PublicSubnetA" : {
+      "Type" : "String",
+      "Description" : "IDs of the public subnets",
+      "ConstraintDescription": "Must be a valid VPC subnet"
+    },
+    "PublicSubnetB" : {
+      "Type" : "String",
+      "Description" : "IDs of the public subnets",
+      "ConstraintDescription": "Must be a valid VPC subnet"
+    },
+    "InstanceType" : {
+      "Type" : "String",
+      "Description" : "Size of instance to deploy",
+      "ConstraintDescription": "Must be a valid AWS instance type"
+    },
+    "AMIId" : {
+      "Type" : "String",
+      "Description" : "AMI for the varnish-www deploy",
+      "ConstraintDescription": "Must be a valid AMI",
+      "Default" : "ami-62ab0318"
+    },
+    "Tier" : {
+      "Type" : "String",
+      "Description" : "Tier to deploy",
+      "ConstraintDescription": "Must be one of dev, stage, uat or prod, used to configure tiered local_settings"
+    },
+    "SSHLocation" : {
+      "Description" : "The IP address range that can be used to SSH to the EC2 instances",
+      "Type": "String",
+      "MinLength": "9",
+      "MaxLength": "18",
+      "Default": "69.2.96.0/19",
+      "AllowedPattern": "(\\d{1,3})\\.(\\d{1,3})\\.(\\d{1,3})\\.(\\d{1,3})/(\\d{1,2})",
+      "ConstraintDescription": "must be a valid IP CIDR range of the form x.x.x.x/x."
+    },
+    "AZs" : {
+      "Description" : "List of AZs used",
+      "Type" : "List<AWS::EC2::AvailabilityZone::Name>"
+    },
+    "KeyName" : {
+      "Description" : "The EC2 Key Pair to allow SSH access to the instances",
+      "Type" : "AWS::EC2::KeyPair::KeyName",
+      "Default" : "mt-dev",
+      "ConstraintDescription" : "must be the name of an existing EC2 KeyPair."
+    },
+    "FileBucketName" : {
+      "Description" : "The name of the bucket that holds CF Init files and templates for these stacks",
+      "Type" : "String"
+    },
+    "AppTemplateURL" : {
+      "Description" : "The URL for the application's cloudformation template",
+      "Type" : "String",
+      "Default" : "Undefined"
+    },
+    "AppRPMVersion" : {
+      "Description" : "Optional, application RPM version (otherwise latest is installed)",
+      "Type" : "String",
+      "Default" : ""
+    },
+    "ExtraUserData" : {
+      "Description" : "Additional tier-specific commands for userdata",
+      "Type" : "String"
+    }
+  },
+
+  "Mappings" : {
+  },
+
+  "Resources" : {
+    "BaseInstance" : {
+      "Type" : "AWS::EC2::Instance",
+      "Metadata" : {
+        "Comment" : "Install the varnish-www server",
+        "AWS::CloudFormation::Init" : {
+          "configSets" : {
+              "install_configure_test" : ["setup_files", "install_configure_app", "start_varnish", "start_logger", "smoke_test", "stop_varnish", "setup_datadog"]
+          },
+          "setup_files" : {
+            "files": {
+              "/etc/yum.repos.d/varnish.repo" : {
+                "content" : { "Fn::Join" : ["", [
+                  "[varnish]\n",
+                  "name=varnish-www RPM repo\n",
+                  "baseurl=http://", { "Ref" : "FileBucketName" }, ".s3.amazonaws.com/repo\n",
+                  "enabled=1\n",
+                  "gpgcheck=0\n",
+                  "priority=1\n",
+                  "plugins=1\n"
+                ]]},
+                "mode" : "000644",
+                "owner" : "root",
+                "group" : "root"
+              }
+            },
+            "commands" : {
+              "01_verify_varnish_repo" : {
+                "command" : "test -e /etc/yum.repos.d/varnish.repo",
+                "ignoreErrors" : "false"
+              }
+            }
+          },
+
+          "install_configure_app" : {
+            "packages" : {
+              "yum" : {
+                "varnish": [],
+                "varnish-libs": [],
+                "adv-varnish-web-vcl-1.0": [],
+                "vmod-named": [],
+                "varnish-logger": []
+              }
+            },
+            "commands" : {
+              "01_copy_in_new_sysconfig" : {
+                "command" : "ln -fs /etc/varnish/varnish_sysconfig /etc/sysconfig/varnish",
+                "ignoreErrors" : "false"
+              }
+            },
+            "services" : {
+              "sysvinit": {
+                "syslog-ng" : {
+                  "enabled" : "true",
+                  "ensureRunning" : "true",
+                  "packages" : { "yum" : ["varnish"] }
+                }
+              }
+            }
+          },
+
+          "start_varnish" : {
+            "commands": {
+              "01_start_varnish" : {
+                "command" : "/sbin/service varnish start",
+                "ignoreErrors" : "false"
+              }
+            }
+          },
+
+          "start_logger" : {
+            "commands": {
+              "01_start_logger" : {
+                "command" : "chkconfig varnishlog off; chkconfig varnishncsa off; chkconfig varnishncsa-syslog on; chkconfig varnish on; /etc/init.d/syslog-ng restart",
+                "ignoreErrors" : "false"
+              }
+            }
+          },
+
+          "smoke_test": {
+            "commands" : {
+              "varnish_smoketests" : {
+                "command" : "",
+                "ignoreErrors" : "false"
+              }
+            }
+          },
+          "stop_varnish": {
+            "commands": {
+              "01_stop_varnish" : {
+                "command" : "/sbin/service varnish stop",
+                "ignoreErrors" : "false"
+              }
+            },
+            "services" : {
+              "sysvinit": {
+                "varnish": {
+                  "enabled": "false",
+                  "ensureRunning": "false"
+                }
+              }
+            }
+          },
+          "setup_datadog": {
+            "files": {
+              "/etc/stack" : {
+                "content" : "varnish-www",
+                "mode" : "000644",
+                "owner" : "root",
+                "group" : "root"
+              }
+            },
+            "commands" : {
+              "01_fix_datadog_stack" : {
+                "command" : "sed -i \"s|lookup('pipe', '/etc/ansible/bin/proxy-credstash.sh get stack unknown')|lookup('file', '/etc/stack')|\" /etc/ansible/roles/datadog/tasks/main.yml",
+                "ignoreErrors" : "false"
+              },
+              "02_fix_hostname_stack" : {
+                "command" : "sed -i \"s|lookup('pipe', '/etc/ansible/bin/proxy-credstash.sh get stack unknown')|lookup('file', '/etc/stack')|\" /etc/ansible/roles/sethostname/tasks/main.yml",
+                "ignoreErrors" : "false"
+              }
+            }
+          }
+        }
+      },
+      "Properties" : {
+        "Tags" : [ { "Key" : "Name", "Value" : "varnish-www Base Instance" } ],
+        "InstanceType" : { "Ref" : "InstanceType" },
+        "ImageId" : { "Ref" : "AMIId" },
+        "KeyName" : { "Ref" : "KeyName" },
+        "NetworkInterfaces" : [{
+          "GroupSet"                 : [{ "Ref" : "nimbusAppSecurityGroup" }],
+          "AssociatePublicIpAddress" : "true",
+          "DeviceIndex"              : "0",
+          "DeleteOnTermination"      : "true",
+          "SubnetId"                 : { "Ref" : "PublicSubnetA" }
+        }],
+        "IamInstanceProfile": { "Ref" : "S3DownloadInstanceProfile" },
+        "UserData" : { "Fn::Base64" : { "Fn::Join" : ["", [
+          "#!/bin/bash\n",
+          "# Helper function\n",
+          "function cfn-respond\n",
+          "{\n",
+          "  if [ -z \"$1\" ]; then\n",
+          "    code=9\n",
+          "  else\n",
+          "    code=\"$1\"\n",
+          "  fi\n",
+          "  msg=$(tail -n1 /var/log/cfn-init.log)\n",
+          "  /opt/aws/bin/cfn-signal --exit-code $code --reason \"$(printf %q \"$msg\")\" '", { "Ref" : "varnishwwwWaitHandle" }, "'\n",
+          "}\n",
+          "unset no_proxy\n",
+          "sed -i -e 's/gpgcheck=1/gpgcheck=0/' /etc/yum.conf\n",
+          "sed -i -e 's/plugins=0/plugins=1/' /etc/yum.conf\n",
+          "sed -i -e 's/gpgcheck=1/gpgcheck=0/' /etc/cloud/platforms/yum.conf\n",
+          "sed -i -e 's/plugins=0/plugins=1/' /etc/cloud/platforms/yum.conf\n",
+          "sed -i -e 's/enabled=1/enabled=0/' /etc/yum.repos.d/platforms.repo\n",
+          "sed -i -e 's/enabled=0/enabled=1/' /etc/yum.repos.d/epel.repo\n",
+
+          "cat << EOF >>/etc/yum.conf\n",
+          "EOF\n",
+          { "Ref" : "ExtraUserData" }, "\n",
+          "/opt/aws/bin/cfn-init -c install_configure_test -v ",
+          "         --stack ", { "Ref" : "AWS::StackName" },
+          "         --resource BaseInstance",
+          "         --region ", { "Ref" : "AWS::Region" }, "\n",
+          "cfn-respond $?\n"
+        ] ] } }
+      }
+    },
+
+    "varnishwwwWaitHandle" : {
+      "Type" : "AWS::CloudFormation::WaitConditionHandle"
+    },
+
+    "varnishwwwWaitCondition" : {
+      "Type" : "AWS::CloudFormation::WaitCondition",
+      "DependsOn" : "BaseInstance",
+      "Properties" : {
+        "Handle" : {"Ref" : "varnishwwwWaitHandle"},
+        "Timeout" : "300"
+      }
+    },
+
+    "S3DownloadInstanceRole":{
+      "Type":"AWS::IAM::Role",
+      "Properties" : {
+        "AssumeRolePolicyDocument" : {
+          "Statement" : [
+            {
+              "Effect":"Allow",
+              "Principal" : {
+                "Service" : [
+                  "ec2.amazonaws.com"
+                ]
+              },
+              "Action" : [
+                "sts:AssumeRole"
+              ]
+            }
+          ]
+        },
+        "Path" : "/"
+      }
+    },
+
+    "RolePolicies":{
+      "Type":"AWS::IAM::Policy",
+      "Properties" : {
+        "PolicyName":"S3Download",
+        "PolicyDocument" : {
+          "Statement" : [
+            {
+              "Action" : [
+                "s3:ListBucket",
+                "s3:GetObject"
+              ],
+              "Effect" : "Allow",
+              "Resource": { "Fn::Join" : [ "", [ "arn:aws:s3:::", { "Ref" : "FileBucketName" }, "/*" ] ] }
+            }
+          ]
+        },
+        "Roles" : [
+          {
+            "Ref" : "S3DownloadInstanceRole"
+          }
+        ]
+      }
+    },
+
+    "S3DownloadInstanceProfile":{
+      "Type":"AWS::IAM::InstanceProfile",
+      "Properties":{
+        "Path":"/",
+        "Roles":[{ "Ref" : "S3DownloadInstanceRole" }]
+      }
+    }
+
+  },
+
+  "Outputs" : {
+    "InstanceId" : {
+      "Description" : "InstanceId of the newly created base instance",
+      "Value" : { "Ref" : "BaseInstance" }
+    },
+    "InstanceIP" : {
+      "Description" : "IP of the newly created base instance",
+      "Value" : { "Fn::GetAtt" : [ "BaseInstance", "PrivateIp" ] }
+    }
+  }
+}

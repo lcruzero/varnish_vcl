@@ -1,0 +1,503 @@
+{
+  "AWSTemplateFormatVersion" : "2010-09-09",
+
+  "Description" : "varnish-www deploy Autoscaling Stack",
+
+  "Parameters" : {
+    "VPCId" : {
+      "Type" : "String",
+      "Description" : "ID of the VPC for varnish-www",
+      "ConstraintDescription": "Must be the ID of a VPC"
+    },
+    "CredstashKeyARN" : {
+      "Type" : "String",
+      "Description" : "ARN for the credstash KMS key",
+      "ConstraintDescription": "Must be a valid ARN"
+    },
+    "nimbusAppSecurityGroup" : {
+      "Type" : "String",
+      "Description" : "SecurityGroup ID for the RDS database",
+      "ConstraintDescription" : "Must be a valid SecurityGroup ID"
+    },
+    "PrivateSubnetA" : {
+      "Type" : "String",
+      "Description" : "IDs of the subnet to launch the base instance",
+      "ConstraintDescription": "Must be a valid VPC subnet"
+    },
+    "PrivateSubnetB" : {
+      "Type" : "String",
+      "Description" : "IDs of the subnet to launch the base instance",
+      "ConstraintDescription": "Must be a valid VPC subnet"
+    },
+    "PublicSubnetA" : {
+      "Type" : "String",
+      "Description" : "IDs of the public subnets",
+      "ConstraintDescription": "Must be a valid VPC subnet"
+    },
+    "PublicSubnetB" : {
+      "Type" : "String",
+      "Description" : "IDs of the public subnets",
+      "ConstraintDescription": "Must be a valid VPC subnet"
+    },
+    "HTTPSCertificateARN" : {
+      "Type" : "String",
+      "Description" : "ARN to the cert to serve https with",
+      "ConstraintDescription": "Must be a valid ARN"
+    },
+    "InstanceType" : {
+      "Type" : "String",
+      "Description" : "Size of instance to deploy",
+      "ConstraintDescription": "Must be a valid AWS instance type"
+    },
+    "VarnishStorageSize" : {
+      "Type" : "String",
+      "Description" : "Varnish Storage Size",
+      "ConstraintDescription": "Must be an integer"
+    },
+    "AMIId" : {
+      "Type" : "String",
+      "Description" : "AMI for the varnish-www deploy",
+      "ConstraintDescription": "Must be a valid AMI",
+      "Default" : "ami-4f953e35"
+    },
+    "Tier" : {
+      "Type" : "String",
+      "Description" : "Tier to deploy",
+      "ConstraintDescription": "Must be one of dev, uat, stage or prod",
+      "Default" : "dev"
+    },
+    "TierSuffix" : {
+      "Type" : "String",
+      "Description" : "Tier suffix to deploy",
+      "ConstraintDescription": "Must be one of: -dev, -uat, -stage or BLANK for prod",
+      "Default" : ""
+    },
+    "SSHLocation" : {
+      "Description" : "The IP address range that can be used to SSH to the EC2 instances",
+      "Type": "String",
+      "MinLength": "9",
+      "MaxLength": "18",
+      "Default": "69.2.96.0/19",
+      "AllowedPattern": "(\\d{1,3})\\.(\\d{1,3})\\.(\\d{1,3})\\.(\\d{1,3})/(\\d{1,2})",
+      "ConstraintDescription": "must be a valid IP CIDR range of the form x.x.x.x/x."
+    },
+    "AZs" : {
+      "Description" : "List of AZss used",
+      "Type" : "List<AWS::EC2::AvailabilityZone::Name>"
+    },
+    "PublicZoneID" : {
+      "Description" : "Zone ID for the teamname-tier.r53.advance.net hosted zone.",
+      "Type" : "String"
+    },
+    "WebELBDNSName" : {
+      "Description" : "Name of the teamname-tier.r53.advance.net domain for the application ELB",
+      "Type" : "String"
+    },
+    "AppTemplateURL" : {
+      "Description" : "The URL for the application's cloudformation template",
+      "Type" : "String",
+      "Default" : "Undefined"
+    },
+    "KeyName" : {
+      "Description" : "The EC2 Key Pair to allow SSH access to the instances",
+      "Type" : "AWS::EC2::KeyPair::KeyName",
+      "Default" : "nimbus-varnish-www",
+      "ConstraintDescription" : "must be the name of an existing EC2 KeyPair."
+    },
+    "FileBucketName" : {
+      "Description" : "The name of the bucket that holds CF Init files and templates for these stacks",
+      "Type" : "String"
+    },
+    "AppTemplateURL" : {
+      "Description" : "The URL for the application's cloudformation template",
+      "Type" : "String",
+      "Default" : "Undefined"
+    },
+    "WebASGMinSize": {
+      "Description" : "Mininum number of Web instances in ASG",
+      "Type" : "Number",
+      "Default" : "4"
+    },
+    "WebASGMaxSize": {
+      "Description" : "Maximum number of Web instances in ASG",
+      "Type" : "Number",
+      "Default" : "8"
+    },
+    "WebASGDesiredCapacity": {
+      "Description" : "Desired number of Web instances in ASG",
+      "Type" : "Number",
+      "Default" : "4"
+    },
+    "WebASGMaxBatchSize": {
+      "Description" : "Max batch size for Web ASG rolling update",
+      "Type" : "Number",
+      "Default" : "8"
+    },
+    "WebASGMinInstancesInService": {
+      "Description" : "Minimum number of Web instances in service during Web ASG rolling update",
+      "Type" : "Number",
+      "Default" : "4"
+    },
+    "RegionString": {
+      "Description" : "Region in which to deploy",
+      "Type" : "String",
+      "Default" : "s3-website-us-east-1"
+    }
+  },
+
+  "Mappings" : {
+  },
+
+  "Conditions" : {
+    "IsDevTier" : { "Fn::Equals" : [ { "Ref" : "Tier" }, "dev" ] },
+    "IsUATTier" : { "Fn::Equals" : [ { "Ref" : "Tier" }, "uat" ] },
+    "IsSTAGETier" : { "Fn::Equals" : [ { "Ref" : "Tier" }, "stage" ] },
+    "IsProdTier" : { "Fn::Equals" : [ { "Ref" : "Tier" }, "prod" ] }
+  },
+
+  "Resources" : {
+    "varnishwwwAutoScalingGroup" : {
+      "Type" : "AWS::AutoScaling::AutoScalingGroup",
+      "Properties" : {
+        "Tags": [
+          { "Key": "Name", "Value": "varnish-www Web Instance", "PropagateAtLaunch": true },
+          { "Key": "stack", "Value": "varnish-www", "PropagateAtLaunch": true },
+          { "Key": "substack", "Value": "web-dyn", "PropagateAtLaunch": true },
+          { "Key": "team", "Value": "nimbus", "PropagateAtLaunch": true },
+          { "Key": "tier", "Value": { "Ref" : "Tier" }, "PropagateAtLaunch": true },
+          { "Key": "is_active", "Value": "True", "PropagateAtLaunch": true }
+        ],
+        "VPCZoneIdentifier" : [ { "Ref" : "PublicSubnetA" }, { "Ref" : "PublicSubnetB" } ],
+        "LaunchConfigurationName" : { "Ref" : "varnishwwwLaunchConfig" },
+        "MinSize" : { "Ref" : "WebASGMinSize" },
+        "MaxSize" : { "Ref" : "WebASGMaxSize" },
+        "DesiredCapacity" : { "Ref": "WebASGDesiredCapacity" },
+        "LoadBalancerNames" : [ { "Ref" : "varnishwwwELB" } ],
+        "HealthCheckType" : "ELB",
+        "HealthCheckGracePeriod" : "600"
+      },
+      "CreationPolicy": {
+        "ResourceSignal": {
+          "Count": { "Ref" : "WebASGMinSize" },
+          "Timeout": "PT15M"
+        }
+      },
+      "UpdatePolicy" : {
+        "AutoScalingRollingUpdate" : {
+          "MaxBatchSize" : { "Ref" : "WebASGMaxBatchSize" },
+          "MinInstancesInService" : { "Ref" : "WebASGMinInstancesInService" },
+          "WaitOnResourceSignals": "true",
+          "PauseTime" : "PT15M"
+        }
+      }
+    },
+
+    "varnishwwwLaunchConfig" : {
+      "Type" : "AWS::AutoScaling::LaunchConfiguration",
+      "Metadata" : {
+        "Comment" : "Deploy the varnish-www webservers",
+        "AWS::CloudFormation::Init" : {
+          "configSets" : {
+              "configure_start_test" : ["configure", "setup_datadog", "start_services", "smoke_test", "verify_instance_health"]
+          },
+
+          "configure" : {
+            "files": {
+              "/etc/syslog-ng/conf.d/30_varnish_logs.conf" : {
+                "content" : { "Fn::Join" : [ "", [ "file(\"/var/log/varnish\" program_override(\"varnish_", { "Ref" : "Tier" }, "_log\") flags(no-parse) default-facility(\"local5\") default-priority(\"info\") follow_freq(1));" ] ] },
+                "mode" : "000644",
+                "owner" : "root",
+                "group" : "root"
+              }
+            },
+            "commands" : {
+
+              "02_configure_tier": {
+                "command" : { "Fn::Join" : [ "", [
+                    "sed -i -e 's/fetch-/fetch_/' /etc/varnish/app/vcl_recv.vcl;\n",
+                    "sed -i -e 's/-dev/", { "Ref" : "TierSuffix" }, "/' /etc/varnish/app/vcl_recv.vcl;\n",
+                    "sed -i -e 's/-stage/", { "Ref" : "TierSuffix" }, "/' /etc/varnish/app/vcl_recv.vcl;\n",
+                    "sed -i -e 's/-uat/", { "Ref" : "TierSuffix" }, "/' /etc/varnish/app/vcl_recv.vcl;\n",
+                    "sed -i -e 's/-prod/", { "Ref" : "TierSuffix" }, "/' /etc/varnish/app/vcl_recv.vcl;\n",
+                    "sed -i -e 's/static-stage.advance.net/static-uat.advance.net/' /etc/varnish/app/vcl_recv.vcl;\n",
+                    "sed -i -e 's/static-prod.advance.net/static", { "Ref" : "TierSuffix" }, ".advance.net/' /etc/varnish/app/vcl_recv.vcl;\n",
+                    "sed -i -e 's/nimbus.r53/nimbus-prod.r53/' /etc/varnish/app/vcl_recv.vcl;\n",
+                    "sed -i -e 's/f5.r53/f5-prod.r53/' /etc/varnish/app/vcl_recv.vcl;\n",
+                    "sed -i -e 's/dev.amp-articles/", { "Ref" : "Tier" }, ".amp-articles/' /etc/varnish/app/vcl_recv.vcl;\n",
+                    "sed -i -e 's/stage.amp-articles/", { "Ref" : "Tier" }, ".amp-articles/' /etc/varnish/app/vcl_recv.vcl;\n",
+                    "sed -i -e 's/fetch_/fetch-/' /etc/varnish/app/vcl_recv.vcl;\n",
+                    "sed -i -e 's/VARNISH_STORAGE_SIZE=2G/VARNISH_STORAGE_SIZE=", { "Ref" : "VarnishStorageSize" }, "G/' /etc/varnish/varnish_sysconfig;\n",
+                    "sed -i -e 's/com.s3-website-us-east-1/com.", { "Ref" : "RegionString" }, "/' /etc/varnish/app/vcl_recv.vcl;\n",
+                    "sed -i -e 's/net.s3-website-us-east-1/net.", { "Ref" : "RegionString" }, "/' /etc/varnish/app/vcl_recv.vcl;\n"
+                    ]
+                  ]
+                },
+                "ignoreErrors" : "false"
+              }
+
+            }
+          },
+
+          "setup_datadog" : {
+            "files": {
+              "/etc/is_monitored" : {
+                "content" : "true",
+                "mode" : "000644",
+                "owner" : "root",
+                "group" : "root"
+              },
+              "/etc/substack" : {
+                "content" : "varnish",
+                "mode" : "000644",
+                "owner" : "root",
+                "group" : "root"
+              }
+            },
+            "commands" : {
+              "01_place_varnish_dd_conf" : {
+                "command" : "mv /etc/varnish/datadog-varnish.yaml /etc/dd-agent/conf.d/varnish.yaml",
+                "ignoreErrors" : "false"
+              },
+              "02_add_dd_to_varnish_group" : {
+                "command" : "usermod -a -G varnish dd-agent",
+                "ignoreErrors" : "false"
+              },
+              "03_rerun_ansible" : {
+                "command" : "/etc/init.d/ansible-boot start",
+                "ignoreErrors" : "false"
+              }
+            }
+          },
+
+          "start_services" : {
+            "services": {
+              "sysvinit": {
+                "syslog-ng" : {
+                  "enabled" : "true",
+                  "ensureRunning" : "true",
+                  "files" : ["/etc/syslog-ng/conf.d/30_varnish_logs.conf"]
+                },
+                "varnish" : {
+                  "enabled" : "true",
+                  "ensureRunning" : "true"
+                },
+                "varnishncsa" : {
+                  "enabled" : "false",
+                  "ensureRunning" : "false"
+                },
+                "varnishncsa-syslog" : {
+                  "enabled" : "true",
+                  "ensureRunning" : "true"
+                }
+              }
+            }
+          },
+
+          "smoke_test" : {
+            "commands": {
+              "varnish_smoketests" : {
+                "command" : { "Fn::Join" : [ "", [ "/bin/bash /etc/varnish/smoketest.sh ", { "Ref" : "TierSuffix" }, ";" ] ] },
+                "ignoreErrors" : "true"
+              }
+            }
+          },
+
+          "verify_instance_health" : {
+            "commands" : {
+              "ELBHealthCheck" : {
+                "command" : { "Fn::Join" : ["", [ 
+                  "until [ \"$state\" == \"\\\"InService\\\"\" ]; do ",
+                  "  state=$(aws --region ", { "Ref" : "AWS::Region" }, " elb describe-instance-health ",
+                  "              --load-balancer-name ", { "Ref" : "varnishwwwELB" }, 
+                  "              --instances $(curl -s http://169.254.169.254/latest/meta-data/instance-id) ",
+                  "              --query InstanceStates[0].State); ",
+                  "  sleep 10; ",
+                  "done"
+                ]]}
+              }
+            }
+          }
+
+        }
+      },
+      "Properties" : {
+        "InstanceType" : { "Ref" : "InstanceType" },
+        "ImageId" : { "Ref" : "AMIId" },
+        "IamInstanceProfile" : { "Ref" : "InstanceProfile" },
+        "AssociatePublicIpAddress" : "true",
+        "SecurityGroups" : [ { "Ref" : "nimbusAppSecurityGroup" } ],
+        "KeyName" : { "Ref" : "KeyName" },
+        "UserData" : { "Fn::Base64" : { "Fn::Join" : ["", [
+          "#!/bin/bash\n",
+          "unset no_proxy\n",
+          "/opt/aws/bin/cfn-init -v -c configure_start_test",
+          "         --stack ", { "Ref" : "AWS::StackName" },
+          "         --resource varnishwwwLaunchConfig",
+          "         --region ", { "Ref" : "AWS::Region" }, "\n",
+          "exit_code=$?\n",
+
+          "# Stop varnish immediately on cfn-init failure. ASG may take a couple minutes to decommission instance\n",
+          "# in response to FAILURE cfn-signal.  By stopping varnish, we guarantee ELB health checks fail, and the bad\n",
+          "# instance will not be added to the ELB.\n",
+          "if [ ! $exit_code -eq 0 ]; then\n",
+          "         /sbin/service varnish start\n",
+          "fi\n",
+
+          "/opt/aws/bin/cfn-signal",
+          "         --exit-code $exit_code ",
+          "         --stack ", { "Ref" : "AWS::StackName" },
+          "         --resource varnishwwwAutoScalingGroup",
+          "         --region ", { "Ref" : "AWS::Region" },
+          "\n"
+        ] ] } }
+      }
+    },
+
+    "varnishwwwELB" : {
+         "Type" : "AWS::ElasticLoadBalancing::LoadBalancer",
+         "Properties" : {
+             "Scheme" : "internet-facing",
+             "SecurityGroups" : [ { "Ref" : "varnishwwwELBSecurityGroup" } ],
+             "Subnets" : [ { "Ref" : "PublicSubnetA" }, { "Ref" : "PublicSubnetB" } ],
+             "HealthCheck" : {
+               "Target": "HTTP:80/varnish-health/",
+               "Interval" : "30",
+               "Timeout" : "5",
+               "UnhealthyThreshold" : "2",
+               "HealthyThreshold" : "2"
+             },
+             "Listeners" : [
+               {
+                 "Protocol" : "HTTP",
+                 "LoadBalancerPort" : "80",
+                 "InstanceProtocol" : "HTTP",
+                 "InstancePort" : "80"
+               },
+               {
+                 "Protocol" : "HTTPS",
+                 "LoadBalancerPort" : "443",
+                 "InstanceProtocol" : "HTTP",
+                 "InstancePort" : "80",
+                 "SSLCertificateId" : { "Ref" : "HTTPSCertificateARN" }
+               }
+             ],
+            "Tags": [
+              { "Key": "Name", "Value": "varnish-www Load Balancer" },
+              { "Key": "stack", "Value": "varnish" },
+              { "Key": "substack", "Value": "load-balancer" },
+              { "Key": "team", "Value": "nimbus" },
+              { "Key": "tier", "Value": { "Ref" : "Tier" } },
+              { "Key": "is_active", "Value": "True" }
+            ]
+         }
+    },
+
+    "varnishwwwELBDNSRecord" : {
+      "Type" : "AWS::Route53::RecordSet",
+      "Properties" : {
+        "HostedZoneId" : { "Ref": "PublicZoneID" },
+        "Comment" : "DNS name for varnish ELB.",
+        "Name" : { "Ref": "WebELBDNSName" },
+        "Type" : "CNAME",
+        "TTL" : "60",
+        "ResourceRecords" : [ { "Fn::GetAtt" : [ "varnishwwwELB", "DNSName" ]} ]
+      }
+    },
+
+    "varnishwwwELBSecurityGroup" : {
+      "Type" : "AWS::EC2::SecurityGroup",
+      "Properties" : {
+        "GroupDescription" : "Enable all web traffic",
+        "VpcId" : { "Ref" : "VPCId" },
+        "SecurityGroupIngress" : [
+          {
+            "IpProtocol" : "TCP",
+            "FromPort" : "80",
+            "ToPort" : "80",
+            "CidrIp" : "0.0.0.0/0"
+          },
+          {
+            "IpProtocol" : "TCP",
+            "FromPort" : "443",
+            "ToPort" : "443",
+            "CidrIp" : "0.0.0.0/0"
+          }
+        ]
+      }
+    },
+
+    "InstanceProfile" : {
+        "Type": "AWS::IAM::InstanceProfile",
+        "Properties": {
+            "Path": "/",
+            "Roles": [ { "Ref": "InstanceRole" } ]
+        }
+    },
+
+    "InstanceRole" : {
+        "Type": "AWS::IAM::Role",
+        "Properties": {
+            "AssumeRolePolicyDocument": {
+                "Statement": [ {
+                    "Effect": "Allow",
+                    "Principal": {
+                        "Service": [ "ec2.amazonaws.com" ]
+                    },
+                    "Action": [ "sts:AssumeRole" ]
+                } ]
+            },
+            "Path": "/",
+            "Policies" : [{
+                "PolicyName": "describe-instance-health-policy",
+                "PolicyDocument": {
+                  "Statement": [{
+                          "Effect": "Allow",
+                          "Action": [ "elasticloadbalancing:DescribeInstanceHealth" ],
+                          "Resource": "*"
+                      }]
+                }
+            },
+            {
+              "PolicyName": "credstash-policy",
+              "PolicyDocument": {
+                "Statement": [
+                  {
+                    "Action": [ "kms:Decrypt" ],
+                    "Effect": "Allow",
+                    "Resource": { "Ref" : "CredstashKeyARN" }
+                  },
+                  {
+                    "Action": [
+                      "dynamodb:GetItem",
+                      "dynamodb:Query",
+                      "dynamodb:Scan"
+                    ],
+                    "Effect": "Allow",
+                    "Resource": { "Fn::Join" : [ "", [ "arn:aws:dynamodb:*:", { "Ref" : "AWS::AccountId" }, ":table/credential-store"]]}
+                  }
+                ]
+              }
+            }]
+        }
+    }
+  },
+
+  "Outputs" : {
+    "ASGId" : {
+      "Description" : "InstanceId of the Web ASG",
+      "Value" : { "Ref" : "varnishwwwAutoScalingGroup" }
+    },
+    "ELBId" : {
+      "Description" : "InstanceId of the Web ELB",
+      "Value" : { "Ref" : "varnishwwwELB" }
+    },
+    "ELBAddress" : {
+      "Description" : "Address for the varnish-www ELB",
+      "Value" :  { "Fn::Join" : [ "", [ "http://", { "Fn::GetAtt" : [ "varnishwwwELB", "DNSName" ]}]]}
+    },
+    "AMIId" : {
+      "Description" : "AMI Used to set the LaunchConfig",
+      "Value" :  { "Ref" : "AMIId" }
+    }
+  }
+}

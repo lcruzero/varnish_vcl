@@ -1,0 +1,18 @@
+args:
+    parent-stacks:
+    - nimbus-vpc
+    - nimbus-setup
+    stack-name: varnish-www-build
+    stack-template: varnish-build.json
+    template-path: .
+    tier: dev
+
+parameters:
+    AMIId: ami-d3aa88a9
+    AppKey: nimbus-varnish-www
+    AZs: us-east-1a,us-east-1b,us-east-1e
+    AppTemplateURL: Undefined
+    ExtraUserData: echo "mmarum ALL=(ALL) ALL" >>/etc/sudoers
+    InstanceType: t2.small
+    Tier: dev
+    KeyName: mt-dev

@@ -1,0 +1,26 @@
+global:
+  args:
+    StackName: nimbus-vpc
+    stack-template: Platform.json
+    template-path: /usr/share/CFTemplates
+    debug: True
+  tags:
+    Name: nimbus-vpc
+    stack: nimbus-vpc
+    substack: nimbus-vpc
+    team: nimbus
+    is_monitored: "False"
+  parameters:
+    FoundationAMIId: ami-d374a3ab
+    BastionInstanceType: t2.micro
+    AZs: us-west-2a,us-west-2b,us-west-2c
+    StackTier: nimbus-dev
+
+dev:
+  args:
+    master-key-pair: nimbus-dev-west
+  tags:
+    tier: dev
+  parameters:
+    StackTier: nimbus-dev
+

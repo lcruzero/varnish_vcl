@@ -1,0 +1,28 @@
+args:
+    parent-stacks:
+    - nimbus-vpc
+    - nimbus-setup
+    stack-name: varnish-www-deploy
+    stack-template: varnish-deploy.json
+    template-path: .
+    tier: stage
+
+parameters:
+    AMIId: ami-db17cea3
+    AppKey: nimbus-varnish-www
+    AZs: us-west-2a,us-west-2b,us-west-2c
+    AppTemplateURL: Undefined
+    CredstashKeyARN: arn:aws:kms:us-west-2:203012769823:key/2f391fad-1537-4959-82f6-7aca891f8ca0
+    HTTPSCertificateARN: arn:aws:acm:us-west-2:203012769823:certificate/ebbdab5c-c637-4cbc-9734-1708e68f7d94
+    PublicZoneID: Z18XK4PN4FV9UG
+    InstanceType: t2.small
+    Tier: stage
+    TierSuffix: -stage
+    WebELBDNSName: varnish-www-west.nimbus-stage.r53.advance.net
+    KeyName: nimbus-stage-west
+    WebASGMinSize: '1'
+    WebASGDesiredCapacity: '1'
+    WebASGMinInstancesInService: '1'
+    VarnishStorageSize: '2'
+    Region: 'us-west-2'
+    RegionString: 'west.s3-website-us-west-2'
